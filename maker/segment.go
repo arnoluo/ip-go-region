@@ -6,8 +6,9 @@ package main
 
 import (
 	"fmt"
-	"goitr/xdb"
 	"strings"
+
+	"github.com/arnoluo/ip-go-region/xdb"
 )
 
 type Segment struct {

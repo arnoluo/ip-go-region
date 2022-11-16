@@ -3,7 +3,7 @@ all: build
 .PHONY: all
 
 test:
-	go test -v ./...
+	go test -v ./
 
 
 build:

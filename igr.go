@@ -1,6 +1,6 @@
-package goitr
+package ipgoregion
 
-import "goitr/xdb"
+import "github.com/arnoluo/ip-go-region/xdb"
 
 const DEFAULT_DB_PATH = "./data/igr.xdb"
 

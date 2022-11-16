@@ -1,4 +1,4 @@
-package goitr
+package ipgoregion
 
 import (
 	"testing"

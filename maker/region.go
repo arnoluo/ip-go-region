@@ -24,10 +24,11 @@ package main
 
 import (
 	"fmt"
-	"goitr/xdb"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/arnoluo/ip-go-region/xdb"
 )
 
 // end of str

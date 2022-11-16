@@ -48,11 +48,12 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
-	"goitr/xdb"
 	"log"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/arnoluo/ip-go-region/xdb"
 )
 
 type Maker struct {

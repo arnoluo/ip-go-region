@@ -1,4 +1,4 @@
-module goitr
+module github.com/arnoluo/ip-go-region
 
 go 1.19
 
