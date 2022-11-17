@@ -36,11 +36,11 @@
 // +-----------------------+----------------------+
 //
 
-// btree entry structure
-// +--------------------+-------------------+-------------------+--------------+
-// |		2bytes		| 		2bytes		| 		2bytes		| 	4 bytes    |
-// +--------------------+-------------------+-------------------+--------------+
-// 	iptail2 start ip	iptail2 end ip	  	region head offset 	region tail ptr
+// segment index structure
+// +--------------------+-------------------+-----------------------+
+// |		2bytes		| 		2 Bytes		| 		4 Bytes			|
+// +--------------------+-------------------+-----------------------+
+// 	start ip tail			end ip tail			region(tail) ptr
 
 package main
 
@@ -240,7 +240,12 @@ func (m *Maker) Start() error {
 	if rgn.write(m.dstHandle) != nil {
 		return fmt.Errorf("seek to current ptr: %w", err)
 	}
-	log.Printf("try to rgn '%d' ... ", rgn.startPtr)
+
+	var byCount int
+	for _, body := range rgn.bodyMap {
+		byCount += len(body.head) - 1
+	}
+	return fmt.Errorf("bycount: `%d`", byCount)
 
 	// 2, write the index block and cache the super index block
 	log.Printf("try to write the segment index block ... ")
@@ -259,7 +264,7 @@ func (m *Maker) Start() error {
 		}
 
 		var segList = seg.Split()
-		log.Printf("try to index segment(%d splits) %s ...", len(segList), segList[0].String())
+		log.Printf("try to index segment(startIp:%s) splits...", xdb.Long2IP(seg.StartIP))
 		for _, s := range segList {
 			pos, err := m.dstHandle.Seek(0, 1)
 			if err != nil {
@@ -269,14 +274,14 @@ func (m *Maker) Start() error {
 			// encode the segment index
 			binary.LittleEndian.PutUint16(indexBuff, uint16(s.StartIP&xdb.IP_TAIL_PATTERN))
 			binary.LittleEndian.PutUint16(indexBuff[2:], uint16(s.EndIP&xdb.IP_TAIL_PATTERN))
-			binary.LittleEndian.PutUint16(indexBuff[4:], rgnBody.headOffset)
-			binary.LittleEndian.PutUint32(indexBuff[6:], tailPtr)
+			// binary.LittleEndian.PutUint16(indexBuff[4:], rgnBody.headOffset)
+			binary.LittleEndian.PutUint32(indexBuff[4:], tailPtr)
 			_, err = m.dstHandle.Write(indexBuff)
 			if err != nil {
 				return fmt.Errorf("write segment index for '%s': %w", s.String(), err)
 			}
 
-			log.Printf("|-segment index: %d, ptr: %d, segment: %s\n", counter, pos, s.String())
+			// log.Printf("|-segment index: %d, ptr: %d, segment: %s\n", counter, pos, s.String())
 			m.setVectorIndex(s.StartIP, uint32(pos))
 			counter++
 
@@ -317,7 +322,7 @@ func (m *Maker) Start() error {
 		return fmt.Errorf("write segment index ptr: %w", err)
 	}
 
-	log.Printf("write done, dataBlocks: %d, indexBlocks: (%d, %d), indexPtr: (%d, %d)",
+	log.Printf("write done, regionBlocks: (head: %d, tail: %d), indexBlocks: %d, indexPtr: (start: %d, end: %d)",
 		rgn.totalBody, rgn.totalTail, counter, startIndexPtr, endIndexPtr)
 
 	return nil

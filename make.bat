@@ -31,11 +31,11 @@ exit /b 0
 exit /b 0
 
 :search
-./xdb_maker search --db=./data/itr.xdb
+./xdb_maker.exe search --db=./data/itr.xdb
 exit /b 0
 
 :bench
-./xdb_maker bench --db=../../data/itr.xdb --src=../../data/ip.merge.txt
+./xdb_maker.exe bench --db=./data/itr.xdb --src=./data/ip.merge.txt
 exit /b 0
 
 :clean

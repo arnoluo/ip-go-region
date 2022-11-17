@@ -97,7 +97,7 @@ func genDb() {
 	log.Printf("Done, elapsed: %s\n", time.Since(tStart))
 }
 
-func testSearch(onlyHead bool) {
+func testSearch(fullSearch bool) {
 	var err error
 	var dbFile = ""
 	for i := 2; i < len(os.Args); i++ {
@@ -182,7 +182,7 @@ quit      : exit the test program`)
 		}
 
 		tStart := time.Now()
-		region, err := searcher.SetSearchMode(onlyHead).Search(ip)
+		region, err := searcher.SetSearchMode(fullSearch).Search(ip)
 		ioCount := searcher.GetIOCount()
 		if err != nil {
 			fmt.Printf("\x1b[0;31m{Err:%s, iocount:%d}\x1b[0m\n", err.Error(), ioCount)
@@ -260,6 +260,7 @@ func testBench() {
 	var count, errCount, tStart = 0, 0, time.Now()
 	var scanner = bufio.NewScanner(handle)
 	scanner.Split(bufio.ScanLines)
+	var spentTime int64
 	for scanner.Scan() {
 		var l = strings.TrimSpace(strings.TrimSuffix(scanner.Text(), "\n"))
 		var ps = strings.SplitN(l, "|", 3)
@@ -289,7 +290,9 @@ func testBench() {
 		mip := xdb.MidIP(sip, eip)
 		for _, ip := range []uint32{sip, xdb.MidIP(sip, mip), mip, xdb.MidIP(mip, eip), eip} {
 			fmt.Printf("|-try to bench ip '%s' ... ", xdb.Long2IP(ip))
+			searchStart := time.Now()
 			region, err := searcher.Search(ip)
+			spentTime += time.Since(searchStart).Microseconds()
 			if err != nil {
 				fmt.Printf("failed to search ip '%s': %s\n", xdb.Long2IP(ip), err)
 				return
@@ -309,7 +312,7 @@ func testBench() {
 		}
 	}
 
-	fmt.Printf("Bench finished, {count: %d, failed: %d, took: %s}\n", count, errCount, time.Since(tStart))
+	fmt.Printf("Bench finished, {count: %d, failed: %d, took: %s, avg search time: %d μs}\n", count, errCount, time.Since(tStart), spentTime/int64(count))
 }
 
 func main() {
@@ -323,10 +326,12 @@ func main() {
 	switch strings.ToLower(os.Args[1]) {
 	case "gen":
 		genDb()
+	// full search
 	case "search":
-		testSearch(false)
-	case "searchhead":
 		testSearch(true)
+	// simple search
+	case "fetch":
+		testSearch(false)
 	case "bench":
 		testBench()
 	default:

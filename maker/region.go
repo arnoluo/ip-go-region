@@ -1,28 +1,31 @@
-// Copyright 2022 The Ip2Region Authors. All rights reserved.
-// Use of this source code is governed by a Apache2.0-style
-// license that can be found in the LICENSE file.
+// region structure
+// regionHead(country|zone|province) + regionTail(city|isp)
 
-// ----
+// region head:
+// the blocks start ptr(4Bytes) saved in header[16:]
+// Marked head location with a 2B offset value in tail block
+// block structure:
+// +----------------+-------------------+
+// |	1 Byte		|		n Bytes		|
+// +----------------+-------------------+
+// 	byte len(<64)		head string bytes
+//
 
-// btree entry structure
-// +--------------------+-------------------+-------------------+-------------------+--------------+
-// | 		2bytes		|		2bytes		| 		2bytes		| 		2bytes		| 	4 bytes    |
-// +--------------------+-------------------+-------------------+-------------------+--------------+
-//  iphead		 		iptail2 start ip	iptail2 end ip	  	region head offset 	region tail ptr
-
-// country+province
-// start ptr(4Bytes) saved in header[16:]
-// cell size 32B/64B
-// end of str with 0b00000000
-// region head structure:
-// +------------------------+
-// |		32/64 bytes 	|
-// +------------------------+
-//  country|zone|province
+// region tail:
+// first 2B for region head offset, 1 addition io to get head data
+// then 1B for tail str byteLen
+// last n Bytes for tail str(n < 255)
+// block structure:
+// +--------------------+-----------------------+-------------------+
+// |		2 Bytes		|		1 Byte			|		n Bytes		|
+// +--------------------+-----------------------+-------------------+
+// 	head offset(<65535)	 tail byte len			tail string bytes(n < 255)
+//
 
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"os"
@@ -49,8 +52,6 @@ type regionBody struct {
 
 func (r *Region) headAndTail(region string) (string, string) {
 	pieces := strings.SplitN(region, xdb.REGION_STR_SEP, 4)
-	// country := pieces[0]
-	// province := pieces[2]
 	tail := pieces[3]
 	return strings.Join(pieces[:3], xdb.REGION_STR_SEP), tail
 }
@@ -59,10 +60,10 @@ func (r *Region) seed(region string) error {
 	headStr, tailStr := r.headAndTail(region)
 	body, has := r.bodyMap[headStr]
 
-	// 尾部字节，需小于 255B
+	// tail Bytes <= 255
 	tailBytes := []byte(tailStr)
 	if len(tailBytes) > 0xFF {
-		return fmt.Errorf("too long region info `%s`: should be less than %d bytes", tailStr, 0xFF)
+		return fmt.Errorf("too long region tail info `%s`: should be less than %d bytes", tailStr, 0xFF)
 	}
 
 	if has {
@@ -73,7 +74,7 @@ func (r *Region) seed(region string) error {
 	} else {
 		headBytes := []byte(headStr)
 		headLen := len(headBytes)
-		// 头部字节需小于 64B
+		// head Bytes < 64
 		if headLen >= xdb.REGION_BASE_BLOCK_SIZE {
 			return fmt.Errorf("too long region info `%s`: should be less than %d bytes", headStr, xdb.REGION_BASE_BLOCK_SIZE)
 		}
@@ -99,7 +100,6 @@ func (r *Region) write(dstHandle *os.File) error {
 		return fmt.Errorf("seek to current ptr: %w", err)
 	}
 	r.startPtr = uint32(pos)
-	log.Println(r.startPtr)
 	var offset uint16
 	for region, body := range r.bodyMap {
 		body.headOffset = offset
@@ -107,13 +107,11 @@ func (r *Region) write(dstHandle *os.File) error {
 		if err != nil {
 			return fmt.Errorf("write region '%s': %w", region, err)
 		}
-		log.Printf("|||Test %d, %d, %d, %s\n", body.headOffset, writedByteNum, uint8(body.head[0]), string(body.head[1:]))
 
 		offset += uint16(writedByteNum)
-		if offset > 0xffff {
+		if offset > 0xFFFF {
 			return fmt.Errorf("seek head offset overflowed: %d", offset)
 		}
-		// pos, err = dstHandle.Seek(0, 1)
 	}
 	r.totalBody = len(r.bodyMap)
 
@@ -125,8 +123,9 @@ func (r *Region) write(dstHandle *os.File) error {
 				return fmt.Errorf("write tail pos '%d': %w", pos, err)
 			}
 
-			var tailAll = make([]byte, 1)
-			tailAll[0] = uint8(len([]byte(tailStr)))
+			var tailAll = make([]byte, 3)
+			binary.LittleEndian.PutUint16(tailAll, body.headOffset)
+			tailAll[2] = uint8(len([]byte(tailStr)))
 			tailAll = append(tailAll, []byte(tailStr)...)
 
 			_, err = dstHandle.Write(tailAll)

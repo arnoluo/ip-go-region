@@ -24,17 +24,17 @@ const (
 	VectorIndexRows      = 256
 	VectorIndexCols      = 256
 	VectorIndexSize      = 8
-	RegionIndexBlockSize = 10
 	VectorIndexLength    = VectorIndexRows * VectorIndexCols * VectorIndexSize
+	RegionIndexBlockSize = 8
 )
 
 const (
 	IP_TAIL_PATTERN = 0xFFFF
 	// bytes
-	REGION_BASE_BLOCK_SIZE   = 64
-	REGION_STR_SEP           = "|"
-	REGION_HEAD_EOS          = 0b00000000
-	REGION_HEAD_EOS_BYTE_NUM = 1
+	REGION_BASE_BLOCK_SIZE = 64
+	REGION_STR_SEP         = "|"
+	// 地域信息串中信息位长度 2B for headOffset, 1B for tail len
+	REGION_BLOCK_INFO_SIZE = 3
 )
 
 type CachePolicy int
@@ -110,12 +110,12 @@ type Searcher struct {
 	// running with the whole xdb file cached
 	contentBuff []byte
 
-	// only find region head(country+province)
+	// enable full search or just find (64-3)B tail string
 	searchMode bool
 }
 
-func (s *Searcher) SetSearchMode(onlySearchHead bool) *Searcher {
-	s.searchMode = onlySearchHead
+func (s *Searcher) SetSearchMode(isFullSearch bool) *Searcher {
+	s.searchMode = isFullSearch
 	return s
 }
 
@@ -190,6 +190,7 @@ func baseNew(dbFile string, vIndex []byte, cBuff []byte) (*Searcher, error) {
 			vectorIndex: nil,
 			header:      header,
 			contentBuff: cBuff,
+			searchMode:  true,
 		}, nil
 	}
 
@@ -207,6 +208,7 @@ func baseNew(dbFile string, vIndex []byte, cBuff []byte) (*Searcher, error) {
 	return &Searcher{
 		handle:      handle,
 		header:      header,
+		searchMode:  true,
 		vectorIndex: vIndex,
 	}, nil
 }
@@ -279,7 +281,7 @@ func (s *Searcher) Search(ip uint32) (string, error) {
 	// fmt.Printf("sPtr=%d, ePtr=%d", sPtr, ePtr)
 
 	// binary search the segment index to get the region
-	var regionHeadOffset, regionTailPtr int64
+	var regionPtr int64
 	var buff = make([]byte, RegionIndexBlockSize)
 	var l, h = 0, int((ePtr - sPtr) / RegionIndexBlockSize)
 	for l <= h {
@@ -299,16 +301,23 @@ func (s *Searcher) Search(ip uint32) (string, error) {
 			if ipTail > eip {
 				l = m + 1
 			} else {
-				regionHeadOffset = int64(binary.LittleEndian.Uint16(buff[4:]))
-				regionTailPtr = int64(binary.LittleEndian.Uint32(buff[6:]))
+				// regionHeadOffset = int64(binary.LittleEndian.Uint16(buff[4:]))
+				regionPtr = int64(binary.LittleEndian.Uint32(buff[4:]))
 				break
 			}
 		}
 	}
 
+	var regionBuff = make([]byte, REGION_BASE_BLOCK_SIZE+REGION_BLOCK_INFO_SIZE)
+	err := s.read(regionPtr, regionBuff)
+	if err != nil {
+		return "", fmt.Errorf("read region tail data at %d: %w", regionPtr, err)
+	}
+
+	regionHeadOffset := int64(binary.LittleEndian.Uint16(regionBuff[:2]))
 	// get region head string
 	var regionHeadBuff = make([]byte, REGION_BASE_BLOCK_SIZE)
-	err := s.read(int64(s.header.RegionHeadStartPtr)+regionHeadOffset, regionHeadBuff)
+	err = s.read(int64(s.header.RegionHeadStartPtr)+regionHeadOffset, regionHeadBuff)
 	if err != nil {
 		return "", fmt.Errorf("read region head data at %d: %w", int64(s.header.RegionHeadStartPtr)+regionHeadOffset, err)
 	}
@@ -316,28 +325,13 @@ func (s *Searcher) Search(ip uint32) (string, error) {
 
 	regionHeadBuff, _ = ParseDynamicBytes(regionHeadBuff)
 
-	// if regionHeadBuff[REGION_BASE_BLOCK_SIZE-1] == REGION_HEAD_EOS {
-	// 	regionHeadBuff = regionHeadBuff[:REGION_BASE_BLOCK_SIZE]
-	// }
-	// regionHeadBuff = bytes.Trim(regionHeadBuff, "")
-
-	if s.searchMode {
-		return string(regionHeadBuff), nil
-	}
-
-	var regionTailBuff = make([]byte, REGION_BASE_BLOCK_SIZE)
-	err = s.read(regionTailPtr, regionTailBuff)
-	if err != nil {
-		return "", fmt.Errorf("read region tail data at %d: %w", regionTailPtr, err)
-	}
-
 	// first byte is lenth of the string behind
-	regionTailBuff, missingLen := ParseDynamicBytes(regionTailBuff)
-	if missingLen > 0 {
+	regionTailBuff, missingLen := ParseDynamicBytes(regionBuff[2:])
+	if s.searchMode && missingLen > 0 {
 		var missingTailBuff = make([]byte, missingLen)
-		err = s.read(regionTailPtr+REGION_BASE_BLOCK_SIZE, missingTailBuff)
+		err = s.read(regionPtr+REGION_BASE_BLOCK_SIZE+REGION_BLOCK_INFO_SIZE, missingTailBuff)
 		if err != nil {
-			return "", fmt.Errorf("read region tail missing data at %d: %w", regionTailPtr+REGION_BASE_BLOCK_SIZE, err)
+			return "", fmt.Errorf("read region tail missing data at %d: %w", regionPtr+REGION_BASE_BLOCK_SIZE, err)
 		}
 		regionTailBuff = append(regionTailBuff, missingTailBuff...)
 	}
