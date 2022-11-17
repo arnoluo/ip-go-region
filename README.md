@@ -55,7 +55,7 @@
 
 ### 缩减二分索引长度，由原来的 14 Bytes 改为 8 Bytes，新结构为
 |startIpTail|endIpTail|regionTailPtr|
-|-|-|-|-|
+|-|-|-|
 |2B|2B|4B|
 > 由于所有查询均使用了vector块进行第一次寻址，所以二分区块内去除了无用的ip前两段数值，仅保留开始与结束ip的后两段，即startIpTail,endIpTail
 
