@@ -1,14 +1,14 @@
 # ip go region
 
 一个提供快速ip到区域转换的离线库
-本项目基于 [ip2region](https://github.com/lionsoul2014/ip2region)，分离出 `golang` 版本生成及查询功能代码并作结构调整，旨在增加较少io的情况下缩减xdb大小。
+本项目基于 [ip2region v2](https://github.com/lionsoul2014/ip2region)，分离出 `golang` 版本功能代码并作结构调整，旨在增加较少io的情况下缩减xdb大小。
 
 ## 进度
 |主要指标|本项目|原项目|
 |-|-|-|
 |xdb文件大小|6.5M|11.1M|
-|单次查询io|n + 1(2)|n|
-> 大部分情况io固定为 n+1，除非有对原始文件`ip.merge.txt` 行内容进行扩充，导致地域尾部信息超长，此时io将变为 n+2
+|单次查询io|num + 1|num|
+> 本项目xdb io固定为 num+1，若对原始文件 `ip.merge.txt` 行内容you进行扩充，导致地域尾部信息超长，此时io可能变为 num+2
 
 ## 使用
 ```golang

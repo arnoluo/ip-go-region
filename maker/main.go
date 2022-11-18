@@ -260,7 +260,7 @@ func testBench() {
 	var count, errCount, tStart = 0, 0, time.Now()
 	var scanner = bufio.NewScanner(handle)
 	scanner.Split(bufio.ScanLines)
-	var spentTime int64
+	var spentTime, ioCount int64
 	for scanner.Scan() {
 		var l = strings.TrimSpace(strings.TrimSuffix(scanner.Text(), "\n"))
 		var ps = strings.SplitN(l, "|", 3)
@@ -293,6 +293,7 @@ func testBench() {
 			searchStart := time.Now()
 			region, err := searcher.Search(ip)
 			spentTime += time.Since(searchStart).Microseconds()
+			ioCount += int64(searcher.GetIOCount())
 			if err != nil {
 				fmt.Printf("failed to search ip '%s': %s\n", xdb.Long2IP(ip), err)
 				return
@@ -303,7 +304,7 @@ func testBench() {
 			if region != ps[2] {
 				errCount++
 				fmt.Printf(" --[Failed] (%s != %s)\n", region, ps[2])
-				if ignoreError == false {
+				if !ignoreError {
 					return
 				}
 			} else {
@@ -312,7 +313,8 @@ func testBench() {
 		}
 	}
 
-	fmt.Printf("Bench finished, {count: %d, failed: %d, took: %s, avg search time: %d μs}\n", count, errCount, time.Since(tStart), spentTime/int64(count))
+	countFloat := float64(count)
+	fmt.Printf("Bench finished, {count: %d, failed: %d, took: %s, avg io count: %.2f, avg search time: %.6f μs}\n", count, errCount, time.Since(tStart), float64(ioCount)/countFloat, float64(spentTime)/countFloat)
 }
 
 func main() {

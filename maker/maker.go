@@ -241,12 +241,6 @@ func (m *Maker) Start() error {
 		return fmt.Errorf("seek to current ptr: %w", err)
 	}
 
-	var byCount int
-	for _, body := range rgn.bodyMap {
-		byCount += len(body.head) - 1
-	}
-	return fmt.Errorf("bycount: `%d`", byCount)
-
 	// 2, write the index block and cache the super index block
 	log.Printf("try to write the segment index block ... ")
 	var indexBuff = make([]byte, xdb.RegionIndexBlockSize)
