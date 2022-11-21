@@ -27,15 +27,15 @@ go build -o xdb_maker.exe ./maker
 exit /b 0
 
 :gen
-./xdb_maker.exe gen --src=./data/ip.merge.txt --dst=./data/itr.xdb
+./xdb_maker.exe gen --src=./data/ip.merge.txt --dst=./data/igr.xdb
 exit /b 0
 
 :search
-./xdb_maker.exe search --db=./data/itr.xdb
+./xdb_maker.exe search --db=./data/igr.xdb
 exit /b 0
 
 :bench
-./xdb_maker.exe bench --db=./data/itr.xdb --src=./data/ip.merge.txt
+./xdb_maker.exe bench --db=./data/igr.xdb --src=./data/ip.merge.txt
 exit /b 0
 
 :clean

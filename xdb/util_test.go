@@ -45,7 +45,7 @@ func TestLong2IP(t *testing.T) {
 }
 
 func TestLoadVectorIndex(t *testing.T) {
-	vIndex, err := LoadVectorIndexFromFile("../../../data/ip2region.xdb")
+	vIndex, err := LoadVectorIndexFromFile(defaultDbPathForTestOnly)
 	if err != nil {
 		fmt.Printf("failed to load vector index: %s\n", err)
 		return
@@ -55,7 +55,7 @@ func TestLoadVectorIndex(t *testing.T) {
 }
 
 func TestLoadContent(t *testing.T) {
-	buff, err := LoadContentFromFile("../../../data/ip2region.xdb")
+	buff, err := LoadContentFromFile(defaultDbPathForTestOnly)
 	if err != nil {
 		fmt.Printf("failed to load xdb content: %s\n", err)
 		return
@@ -65,7 +65,7 @@ func TestLoadContent(t *testing.T) {
 }
 
 func TestLoadHeader(t *testing.T) {
-	header, err := LoadHeaderFromFile("../../../data/ip2region.xdb")
+	header, err := LoadHeaderFromFile(defaultDbPathForTestOnly)
 	if err != nil {
 		fmt.Printf("failed to load xdb header info: %s\n", err)
 		return
@@ -76,4 +76,5 @@ func TestLoadHeader(t *testing.T) {
 	fmt.Printf("CreatedAt      : %d(%s)\n", header.CreatedAt, time.Unix(int64(header.CreatedAt), 0).Format(time.RFC3339))
 	fmt.Printf("StartIndexPtr  : %d\n", header.StartIndexPtr)
 	fmt.Printf("EndIndexPtr    : %d\n", header.EndIndexPtr)
+	fmt.Printf("RegionHeadStartPtr    : %d\n", header.RegionHeadStartPtr)
 }

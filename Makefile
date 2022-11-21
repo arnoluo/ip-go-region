@@ -2,17 +2,20 @@
 all: build
 .PHONY: all
 
+SRC := ./data/ip.merge.txt
+DST := ./data/igr.xdb
+MAKER := xdb_maker
+
 test:
 	go test -v ./xdb
 
-
 build:
-	go build -o xdb_maker ./maker
+	go build -o $(MAKER) ./maker
 gen:
-	./xdb_maker gen --src=./data/ip.merge.txt --dst=./data/igr.xdb
+	./$(MAKER) gen --src=$(SRC) --dst=$(DST)
 search:
-	./xdb_maker search --db=./data/igr.xdb
+	./$(MAKER) search --db=$(DST)
 bench:
-	./xdb_maker bench --db=./data/igr.xdb --src=./data/ip.merge.txt
+	./$(MAKER) bench --db=$(DST) --src=$(SRC)
 clean:
-	find ./ -name xdb_maker | xargs rm -f
+	find ./ -name $(MAKER) | xargs rm -f

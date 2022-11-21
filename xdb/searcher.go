@@ -110,10 +110,28 @@ type Searcher struct {
 	// running with the whole xdb file cached
 	contentBuff []byte
 
-	// enable full search or just find (64-3)B tail string
+	// enable full search or just find length-limited tail string
 	searchMode bool
+
+	// set result tail length in searching
+	matchTailLen uint8
 }
 
+// 设置地域尾部信息默认查询长度，默认64（Bytes）
+// 此选项若设置为最大值255，所有查询io将均为 num+1，此时SetSearchMode()不再影响查询结果
+// 此选项仅建议在优化原始文件`地域尾部信息`长度后进行调整
+func (s *Searcher) SetMatchTailLen(l uint8) *Searcher {
+	s.matchTailLen = l
+	return s
+}
+
+func (s *Searcher) GetMatchTailLen() uint8 {
+	return s.matchTailLen
+}
+
+// 设置是否开启完全查询，默认开启，此选项仅影响返回的地域尾部信息长度
+// true 开启时，将获取完整地域尾部信息，若原始文件有自定义扩充，可能导致查询io 为 num + 2
+// false 关闭时，将仅截取默认长度的地域尾部信息，默认长度由SetMatchTailLen()决定，此操作将固定查询io为 num+1
 func (s *Searcher) SetSearchMode(isFullSearch bool) *Searcher {
 	s.searchMode = isFullSearch
 	return s
@@ -154,6 +172,9 @@ func (s *Searcher) ClearVectorIndex() {
 	s.vectorIndex = nil
 }
 
+// 创建查询器
+// @var dbPath string xdb文件路径
+// @var cachePolicy CachePolicy 缓存策略枚举值
 func Create(dbPath string, cachePolicy CachePolicy) (*Searcher, error) {
 	switch cachePolicy {
 	case CACHE_POLICY_FILE:
@@ -187,10 +208,11 @@ func baseNew(dbFile string, vIndex []byte, cBuff []byte) (*Searcher, error) {
 			return nil, err
 		}
 		return &Searcher{
-			vectorIndex: nil,
-			header:      header,
-			contentBuff: cBuff,
-			searchMode:  true,
+			vectorIndex:  nil,
+			header:       header,
+			contentBuff:  cBuff,
+			searchMode:   true,
+			matchTailLen: REGION_BASE_BLOCK_SIZE,
 		}, nil
 	}
 
@@ -206,10 +228,11 @@ func baseNew(dbFile string, vIndex []byte, cBuff []byte) (*Searcher, error) {
 	}
 
 	return &Searcher{
-		handle:      handle,
-		header:      header,
-		searchMode:  true,
-		vectorIndex: vIndex,
+		handle:       handle,
+		header:       header,
+		vectorIndex:  vIndex,
+		searchMode:   true,
+		matchTailLen: REGION_BASE_BLOCK_SIZE,
 	}, nil
 }
 
@@ -308,7 +331,7 @@ func (s *Searcher) Search(ip uint32) (string, error) {
 		}
 	}
 
-	var regionBuff = make([]byte, REGION_BASE_BLOCK_SIZE+REGION_BLOCK_INFO_SIZE)
+	var regionBuff = make([]byte, s.matchTailLen+REGION_BLOCK_INFO_SIZE)
 	err := s.read(regionPtr, regionBuff)
 	if err != nil {
 		return "", fmt.Errorf("read region tail data at %d: %w", regionPtr, err)
@@ -329,9 +352,9 @@ func (s *Searcher) Search(ip uint32) (string, error) {
 	regionTailBuff, missingLen := ParseDynamicBytes(regionBuff[2:])
 	if s.searchMode && missingLen > 0 {
 		var missingTailBuff = make([]byte, missingLen)
-		err = s.read(regionPtr+REGION_BASE_BLOCK_SIZE+REGION_BLOCK_INFO_SIZE, missingTailBuff)
+		err = s.read(regionPtr+int64(s.matchTailLen)+REGION_BLOCK_INFO_SIZE, missingTailBuff)
 		if err != nil {
-			return "", fmt.Errorf("read region tail missing data at %d: %w", regionPtr+REGION_BASE_BLOCK_SIZE, err)
+			return "", fmt.Errorf("read region tail missing data at %d: %w", regionPtr+int64(s.matchTailLen)+REGION_BLOCK_INFO_SIZE, err)
 		}
 		regionTailBuff = append(regionTailBuff, missingTailBuff...)
 	}

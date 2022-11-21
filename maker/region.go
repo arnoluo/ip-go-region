@@ -13,13 +13,13 @@
 
 // region tail:
 // first 2B for region head offset, 1 addition io to get head data
-// then 1B for tail str byteLen
+// then 1B for tail str byte num
 // last n Bytes for tail str(n < 255)
 // block structure:
 // +--------------------+-----------------------+-------------------+
 // |		2 Bytes		|		1 Byte			|		n Bytes		|
 // +--------------------+-----------------------+-------------------+
-// 	head offset(<65535)	 tail byte len			tail string bytes(n < 255)
+// 	head offset(<65535)	 tail byte num			tail string bytes(n < 255)
 //
 
 package main
