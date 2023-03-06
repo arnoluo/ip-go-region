@@ -11,11 +11,15 @@ test:
 
 build:
 	go build -o $(MAKER) ./maker
-gen:
-	./$(MAKER) gen --src=$(SRC) --dst=$(DST)
-search:
-	./$(MAKER) search --db=$(DST)
-bench:
-	./$(MAKER) bench --db=$(DST) --src=$(SRC)
+
 clean:
 	find ./ -name $(MAKER) | xargs rm -f
+
+gen: build
+	./$(MAKER) gen --src=$(SRC) --dst=$(DST)
+
+search: build
+	./$(MAKER) search --db=$(DST)
+
+bench: build
+	./$(MAKER) bench --db=$(DST) --src=$(SRC)

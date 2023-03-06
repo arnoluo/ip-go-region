@@ -64,6 +64,7 @@ type Maker struct {
 	segments    []*Segment
 	// regionPool  map[string]uint32
 	vectorIndex []byte
+	region      *region
 }
 
 func NewMaker(policy xdb.IndexPolicy, srcFile string, dstFile string) (*Maker, error) {
@@ -87,6 +88,13 @@ func NewMaker(policy xdb.IndexPolicy, srcFile string, dstFile string) (*Maker, e
 		segments:    []*Segment{},
 		// regionPool:  map[string]uint32{},
 		vectorIndex: make([]byte, xdb.VectorIndexLength),
+		region: &region{
+			startPtr:        0,
+			treeMap:         map[string]*regionTree{},
+			totalTail:       0,
+			totalTree:       0,
+			reservedTailPtr: 0,
+		},
 	}, nil
 }
 
@@ -138,39 +146,17 @@ func (m *Maker) loadSegments() error {
 		var l = strings.TrimSpace(strings.TrimSuffix(scanner.Text(), "\n"))
 		log.Printf("load segment: `%s`", l)
 
-		var ps = strings.SplitN(l, "|", 3)
-		if len(ps) != 3 {
-			return fmt.Errorf("invalid ip segment line `%s`", l)
-		}
-
-		sip, err := xdb.CheckIP(ps[0])
+		seg, err := SegmentFrom(l)
 		if err != nil {
-			return fmt.Errorf("check start ip `%s`: %s", ps[0], err)
+			return err
 		}
 
-		eip, err := xdb.CheckIP(ps[1])
-		if err != nil {
-			return fmt.Errorf("check end ip `%s`: %s", ps[1], err)
-		}
-
-		if sip > eip {
-			return fmt.Errorf("start ip(%s) should not be greater than end ip(%s)", ps[0], ps[1])
-		}
-
-		if len(ps[2]) < 1 {
-			return fmt.Errorf("empty region info in segment line `%s`", l)
-		}
-
-		var seg = &Segment{
-			StartIP: sip,
-			EndIP:   eip,
-			Region:  ps[2],
-		}
+		m.region.seed(seg.RegionHead, seg.RegionTail)
 
 		// check the continuity of the data segment
 		if last != nil {
 			if last.EndIP+1 != seg.StartIP {
-				return fmt.Errorf("discontinuous data segment: last.eip+1(%d) != seg.sip(%d, %s)", sip, eip, ps[0])
+				return fmt.Errorf("discontinuous data segment: last.eip+1(%d) != seg.sip(%d, %s)", last.EndIP, seg.StartIP, xdb.Long2IP(seg.StartIP))
 			}
 		}
 
@@ -213,6 +199,38 @@ func (m *Maker) setVectorIndex(ip uint32, ptr uint32) {
 	}
 }
 
+func (m *Maker) setReservedVectorIndex(ip uint32, ptr uint32) {
+	var il0 = (ip >> 24) & 0xFF
+	var il1 = (ip >> 16) & 0xFF
+	var idx = il0*xdb.VectorIndexCols*xdb.VectorIndexSize + il1*xdb.VectorIndexSize
+	binary.LittleEndian.PutUint32(m.vectorIndex[idx:], ptr)
+	binary.LittleEndian.PutUint32(m.vectorIndex[idx+4:], ptr)
+	fmt.Println(xdb.Long2IP(ip), ptr)
+}
+
+func (m *Maker) setReserveIndex() (pos uint32, err error) {
+	current, err := m.dstHandle.Seek(0, 1)
+	pos = uint32(current)
+	if err != nil {
+		// err = fmt.Errorf("seek to segment index block: %w", err)
+		return
+	}
+
+	if m.region.reservedTailPtr == 0 {
+		err = fmt.Errorf("reserved tail ptr not set")
+		return
+	}
+
+	// encode the segment index
+	var indexBuff = make([]byte, xdb.RegionIndexBlockSize)
+	binary.LittleEndian.PutUint16(indexBuff, 0)
+	binary.LittleEndian.PutUint16(indexBuff[2:], uint16(xdb.IP_TAIL_PATTERN))
+	// binary.LittleEndian.PutUint16(indexBuff[4:], rgnBody.headOffset)
+	binary.LittleEndian.PutUint32(indexBuff[4:], m.region.reservedTailPtr)
+	_, err = m.dstHandle.Write(indexBuff)
+	return
+}
+
 // Start to make the binary file
 func (m *Maker) Start() error {
 	if len(m.segments) < 1 {
@@ -225,38 +243,33 @@ func (m *Maker) Start() error {
 		return fmt.Errorf("seek to data first ptr: %w", err)
 	}
 
-	log.Printf("try to write the data block ... ")
-	rgn := &Region{
-		startPtr:  0,
-		bodyMap:   map[string]*regionBody{},
-		totalTail: 0,
-		totalBody: 0,
-	}
-	for _, seg := range m.segments {
-		log.Printf("try to write region '%s' ... ", seg.Region)
-		rgn.seed(seg.Region)
+	log.Printf("try to write the region tree block ... ")
+	if m.region.write(m.dstHandle) != nil {
+		return fmt.Errorf("seek to current ptr: %s", err)
 	}
 
-	if rgn.write(m.dstHandle) != nil {
-		return fmt.Errorf("seek to current ptr: %w", err)
+	reservedTailPtr, err := m.setReserveIndex()
+	if err != nil {
+		return err
 	}
 
 	// 2, write the index block and cache the super index block
 	log.Printf("try to write the segment index block ... ")
 	var indexBuff = make([]byte, xdb.RegionIndexBlockSize)
-	var counter, startIndexPtr, endIndexPtr = 0, int64(-1), int64(-1)
+	var counter, startIndexPtr, endIndexPtr = 1, int64(-1), int64(-1)
 	for _, seg := range m.segments {
 		// dataPtr, has := m.regionPool[seg.Region]
-		headStr, tailStr := rgn.headAndTail(seg.Region)
-		rgnBody, has := rgn.bodyMap[headStr]
+		// headStr, tailStr := rgn.headAndTail(seg.Region)
+		regionTree, has := m.region.treeMap[seg.RegionHead]
 		if !has {
-			return fmt.Errorf("missing ptr cache for head `%s`", seg.Region)
+			return fmt.Errorf("missing ptr cache for head `%s`", seg.RegionHead)
 		}
-		tailPtr, has := rgnBody.tailPtrMap[tailStr]
+		tailPtr, has := regionTree.tailPtrMap[seg.RegionTail]
 		if !has {
-			return fmt.Errorf("missing ptr cache for tail `%s`", seg.Region)
+			return fmt.Errorf("missing ptr cache for tail `%s`", seg.RegionTail)
 		}
 
+		isReserved := seg.IsReserved()
 		var segList = seg.Split()
 		log.Printf("try to index segment(startIp:%s) splits...", xdb.Long2IP(seg.StartIP))
 		for _, s := range segList {
@@ -264,20 +277,23 @@ func (m *Maker) Start() error {
 			if err != nil {
 				return fmt.Errorf("seek to segment index block: %w", err)
 			}
+			if isReserved {
+				m.setReservedVectorIndex(s.StartIP, reservedTailPtr)
+			} else {
+				// encode the segment index
+				binary.LittleEndian.PutUint16(indexBuff, uint16(s.StartIP&xdb.IP_TAIL_PATTERN))
+				binary.LittleEndian.PutUint16(indexBuff[2:], uint16(s.EndIP&xdb.IP_TAIL_PATTERN))
+				// binary.LittleEndian.PutUint16(indexBuff[4:], rgnBody.headOffset)
+				binary.LittleEndian.PutUint32(indexBuff[4:], tailPtr)
+				_, err = m.dstHandle.Write(indexBuff)
+				if err != nil {
+					return fmt.Errorf("write segment index for '%s': %w", s.String(), err)
+				}
 
-			// encode the segment index
-			binary.LittleEndian.PutUint16(indexBuff, uint16(s.StartIP&xdb.IP_TAIL_PATTERN))
-			binary.LittleEndian.PutUint16(indexBuff[2:], uint16(s.EndIP&xdb.IP_TAIL_PATTERN))
-			// binary.LittleEndian.PutUint16(indexBuff[4:], rgnBody.headOffset)
-			binary.LittleEndian.PutUint32(indexBuff[4:], tailPtr)
-			_, err = m.dstHandle.Write(indexBuff)
-			if err != nil {
-				return fmt.Errorf("write segment index for '%s': %w", s.String(), err)
+				// log.Printf("|-segment index: %d, ptr: %d, segment: %s\n", counter, pos, s.String())
+				m.setVectorIndex(s.StartIP, uint32(pos))
+				counter++
 			}
-
-			// log.Printf("|-segment index: %d, ptr: %d, segment: %s\n", counter, pos, s.String())
-			m.setVectorIndex(s.StartIP, uint32(pos))
-			counter++
 
 			// check and record the start index ptr
 			if startIndexPtr == -1 {
@@ -305,7 +321,7 @@ func (m *Maker) Start() error {
 	log.Printf("try to write the segment index ptr ... ")
 	binary.LittleEndian.PutUint32(headerBuff, uint32(startIndexPtr))
 	binary.LittleEndian.PutUint32(headerBuff[4:], uint32(endIndexPtr))
-	binary.LittleEndian.PutUint32(headerBuff[8:], rgn.startPtr)
+	binary.LittleEndian.PutUint32(headerBuff[8:], m.region.startPtr)
 	_, err = m.dstHandle.Seek(8, 0)
 	if err != nil {
 		return fmt.Errorf("seek segment index ptr: %w", err)
@@ -317,7 +333,7 @@ func (m *Maker) Start() error {
 	}
 
 	log.Printf("write done, regionBlocks: (head: %d, tail: %d), indexBlocks: %d, indexPtr: (start: %d, end: %d)",
-		rgn.totalBody, rgn.totalTail, counter, startIndexPtr, endIndexPtr)
+		m.region.totalTree, m.region.totalTail, counter, startIndexPtr, endIndexPtr)
 
 	return nil
 }

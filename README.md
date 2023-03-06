@@ -1,15 +1,15 @@
 # ip go region
 
-一个提供快速ip到区域转换的离线库
-本项目基于 [ip2region v2](https://github.com/lionsoul2014/ip2region)，分离出 `golang` 版本功能代码并作结构调整，旨在增加少量io的情况下缩减xdb大小。
+一个提供快速ip到地域转换的精简版离线库
+本项目对 [ip2region v2](https://github.com/lionsoul2014/ip2region) 离线库进行了数据结构调整和重编译，旨在增加少量io的情况下缩减xdb大小。
 
-## 进度
+## 变更项
 |主要指标|本项目|原项目|
 |-|-|-|
-|xdb文件大小|6.5M|11.1M|
-|单次查询io|num + 1|num|
+|xdb size|6.5M|11.1M|
+|io/op(file/vector cache)|n + 1|n|
 
-> 本项目xdb所有配置下查询io固定为 num + 1，若有对原始文件 `ip.merge.txt` 行内容进行扩充并重新编译xdb文件，可能存在 `地域尾部信息` 超长，此时io变为 num + 2
+> 全内存缓存策略下无文件io，另外两种策略下本项目查询io固定为 `n + 1`，若有对原始文件 `ip.merge.txt` 行内容进行扩充并重新编译xdb文件，可能存在 `地域尾部信息` 超长，此时io变为 `n + 2`
 
 ## 使用
 ### 安装
@@ -43,12 +43,12 @@ func main() {
 
     /////////// 以下为配置项，可跳过 /////////////
     // 设置是否开启完全查询，默认开启，此选项仅影响返回的地域尾部信息长度
-    // 开启时，将获取完整地域尾部信息，若原始文件有自定义扩充，可能导致查询io 为 num + 2
-    // 关闭时，将仅截取默认长度的地域尾部信息，默认长度由SetMatchTailLen()决定，此操作将固定查询io为 num+1
+    // 开启时，将获取完整地域尾部信息，若原始文件有自定义扩充，可能导致查询io 为 n + 2
+    // 关闭时，将仅截取默认长度的地域尾部信息，默认长度由SetMatchTailLen()决定，此操作将固定查询io为 n + 1
     memorySe.SetSearchMode(false)
 
     // 设置地域尾部信息默认查询长度，默认64（Bytes）
-    // 此选项若设置为最大值255，所有查询io将均为 num+1，此时SetSearchMode()不再影响查询结果
+    // 此选项若设置为最大值255，所有查询io将均为 n + 1，此时SetSearchMode()不再影响查询结果
     // 此选项仅建议在优化原始文件`地域尾部信息`长度后进行调整
     memorySe.SetMatchTailLen(128)
     /////////// 以上为配置项，可跳过 /////////////
@@ -60,7 +60,7 @@ func main() {
 }
 ```
 
-### 编译
+### 编译(require make installed)
 编译前请先下载[ip.merge.txt](https://github.com/lionsoul2014/ip2region/blob/master/data/ip.merge.txt)，或按照行格式自行创建原始文件，格式为 `startIP|endIP|国家|区域|省(州)|城市|isp` + `任意扩展字符串`。然后将原始文件放入 `data` 目录(此为默认编译目录，可编辑 `Makefile` 进行修改)，即可进行编译。
 若为自行创建的原始文件，或对原始文件进行扩充，建议先阅读[拆分地域信息](###拆分地域信息)部分，了解各段信息的填充限制，避免编译失败。
 编译后使用 `make bench` 完成全ip覆盖测试后方可使用
@@ -83,7 +83,7 @@ make clean
 ```
 
 ### 其他说明
-本文档主要对调整部分进行了说明，若有其他方面疑问，可参考[原项目文档](https://github.com/lionsoul2014/ip2region)
+本文档只对调整部分进行了说明，其他可参考[原项目文档](https://github.com/lionsoul2014/ip2region)
 
 
 ## 结构调整
@@ -91,7 +91,7 @@ make clean
 由于目前地域信息都是使用 `ip.merge.txt` 进行生成，所以本次拆分也基于此文件行格式，即：
 `startIP|endIP|国家|区域|省(州)|城市|isp`
 
-其中地域信息 `国家|区域|省(州)|城市|isp` 拆分为头部，尾部两段分开存储，以减小重复内容
+其中地域信息 `国家|区域|省(州)|城市|isp` 拆分为头部 `国家|区域|省(州)` ，尾部 `城市|isp` 两段分开存储，以减小重复内容
 
 
 #### 1. 地域头部信息
@@ -128,12 +128,9 @@ make clean
 |startIpLongTail|endIpLongTail|regionTailPtr|
 |-|-|-|
 |2 Bytes|2 Bytes|4 Bytes|
-> 由于目前所有缓存模式的查询均使用了vector结构进行第一次寻址，所以二分结构行内去除了重复且无用的ip前两段数值(即舍弃了后续只使用二分索引进行查询的可行性，也不推荐采用这种方式)，保留ip的后两段，即startLongIpTail,endLongIpTail(以ip string为例： ip: 1.2.3.4, ipHead: 1.2; ipTail: 3.4 ipHead将被移除，ipTail转为long存入索引行)
+> 由于目前所有缓存模式的查询均使用了vector结构进行第一次寻址，所以二分结构行内去除了重复且无用的ip前两段数值(即舍弃了后续只使用二分索引进行查询的可行性，当然也不推荐采用这种方式)，保留ip的后两段，即startLongIpTail,endLongIpTail(以ip string为例： ip: 1.2.3.4, ipHead: 1.2; ipTail: 3.4 ipHead将被移除，ipTail转为long存入索引行)
 
 > 地域信息1:n二分索引，所以这里二分索引内的长度段移除，改为记录到地域尾部信息内，节省冗余空间
-
-## 运行数据参照
-以下数据，均为本机执行结果，非结论性统计，仅供参考
 
 ## License
 本项目遵循 MIT License，原项目遵循 Apache License 2.0，详细内容请查看 [LICENSE](./LICENSE)

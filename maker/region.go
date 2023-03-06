@@ -14,12 +14,12 @@
 // region tail:
 // first 2B for region head offset, 1 addition io to get head data
 // then 1B for tail str byte num
-// last n Bytes for tail str(n < 255)
+// last n Bytes for tail str(n <= 255)
 // block structure:
 // +--------------------+-----------------------+-------------------+
 // |		2 Bytes		|		1 Byte			|		n Bytes		|
 // +--------------------+-----------------------+-------------------+
-// 	head offset(<65535)	 tail byte num			tail string bytes(n < 255)
+// 	head offset(<=65535)	 tail byte num			tail string bytes(n <= 255)
 //
 
 package main
@@ -34,78 +34,107 @@ import (
 	"github.com/arnoluo/ip-go-region/xdb"
 )
 
-// end of str
-const REGION_EOS_BYTE_NUM = 1
+type regionHeadPart = int
 
-type Region struct {
-	startPtr  uint32
-	bodyMap   map[string]*regionBody
-	totalTail int
-	totalBody int
+const (
+	// 舍弃地址头部中的地域信息
+	REGION_HEAD_TYPE_NO_AREA regionHeadPart = iota
+	// 包含全部信息
+	REGION_HEAD_TYPE_ALL
+)
+
+const REGION_HEAD_TYPE = REGION_HEAD_TYPE_NO_AREA
+const RESERVED_TAIL_ADDR = "内网IP|内网IP"
+const RESERVED_HEAD_ADDR = "0|0"
+
+type region struct {
+	startPtr uint32
+	// head string => head info & tails
+	treeMap         map[string]*regionTree
+	totalTail       int
+	totalTree       int
+	reservedTailPtr uint32
 }
 
-type regionBody struct {
-	head       []byte
+type regionTree struct {
 	headOffset uint16
+	// tail string => tail info ptr
 	tailPtrMap map[string]uint32
 }
 
-func (r *Region) headAndTail(region string) (string, string) {
+func headAndTail(region string) (head string, tail string, err error) {
 	pieces := strings.SplitN(region, xdb.REGION_STR_SEP, 4)
-	tail := pieces[3]
-	return strings.Join(pieces[:3], xdb.REGION_STR_SEP), tail
-}
-
-func (r *Region) seed(region string) error {
-	headStr, tailStr := r.headAndTail(region)
-	body, has := r.bodyMap[headStr]
-
-	// tail Bytes <= 255
-	tailBytes := []byte(tailStr)
-	if len(tailBytes) > 0xFF {
-		return fmt.Errorf("too long region tail info `%s`: should be less than %d bytes", tailStr, 0xFF)
+	if REGION_HEAD_TYPE == REGION_HEAD_TYPE_ALL {
+		head = strings.Join(pieces[:3], xdb.REGION_STR_SEP)
+	} else {
+		head = strings.Join([]string{
+			pieces[0],
+			pieces[2],
+		}, xdb.REGION_STR_SEP)
 	}
 
+	tail = pieces[3]
+	err = nil
+	if err = checkRegionTail(head); err == nil {
+		err = checkRegionTail(tail)
+	}
+	return
+}
+
+func checkRegionHead(regionHead string) (err error) {
+	err = nil
+	if len(regionHead) >= xdb.REGION_BASE_BLOCK_SIZE {
+		err = fmt.Errorf("too long region info `%s`(%dB): should be less than %d bytes", regionHead, len(regionHead), xdb.REGION_BASE_BLOCK_SIZE)
+	}
+	return
+}
+
+func checkRegionTail(regionTail string) (err error) {
+	err = nil
+	if len(regionTail) > 0xFF {
+		err = fmt.Errorf("too long region tail info `%s`(%dB): should be less than or equal %d bytes", regionTail, len(regionTail), 0xFF)
+	}
+	return
+}
+
+func (r *region) seed(headStr string, tailStr string) {
+	// headStr, tailStr, err = headAndTail(region)
+	// if err != nil {
+	// 	return
+	// }
+
+	tree, has := r.treeMap[headStr]
+
 	if has {
-		_, hasKey := body.tailPtrMap[tailStr]
+		_, hasKey := tree.tailPtrMap[tailStr]
 		if !hasKey {
-			body.tailPtrMap[tailStr] = 0
+			tree.tailPtrMap[tailStr] = 0
 		}
 	} else {
-		headBytes := []byte(headStr)
-		headLen := len(headBytes)
-		// head Bytes < 64
-		if headLen >= xdb.REGION_BASE_BLOCK_SIZE {
-			return fmt.Errorf("too long region info `%s`: should be less than %d bytes", headStr, xdb.REGION_BASE_BLOCK_SIZE)
-		}
-		var headByteAll = make([]byte, 1)
-		headByteAll[0] = uint8(headLen)
-		headByteAll = append(headByteAll, headBytes...)
-
-		r.bodyMap[headStr] = &regionBody{
-			head:       headByteAll,
+		r.treeMap[headStr] = &regionTree{
 			headOffset: 0,
 			tailPtrMap: map[string]uint32{
 				tailStr: 0,
 			},
 		}
 	}
-
-	return nil
 }
 
-func (r *Region) write(dstHandle *os.File) error {
+func (r *region) write(dstHandle *os.File) error {
 	pos, err := dstHandle.Seek(0, 1)
 	if err != nil {
-		return fmt.Errorf("seek to current ptr: %w", err)
+		return fmt.Errorf("seek to current ptr: %s", err)
 	}
 	r.startPtr = uint32(pos)
 	var offset uint16
-	for region, body := range r.bodyMap {
-		body.headOffset = offset
-		writedByteNum, err := dstHandle.Write(body.head)
+	for regionHead, tree := range r.treeMap {
+		tree.headOffset = offset
+		var headByteAll = make([]byte, 1)
+		headByteAll[0] = uint8(len(regionHead))
+		headByteAll = append(headByteAll, []byte(regionHead)...)
+		writedByteNum, err := dstHandle.Write(headByteAll)
 		if err != nil {
-			return fmt.Errorf("write region '%s': %w", region, err)
+			return fmt.Errorf("write region '%s': %w", regionHead, err)
 		}
 
 		offset += uint16(writedByteNum)
@@ -113,10 +142,10 @@ func (r *Region) write(dstHandle *os.File) error {
 			return fmt.Errorf("seek head offset overflowed: %d", offset)
 		}
 	}
-	r.totalBody = len(r.bodyMap)
+	r.totalTree = len(r.treeMap)
 
-	for _, body := range r.bodyMap {
-		for tailStr := range body.tailPtrMap {
+	for _, tree := range r.treeMap {
+		for tailStr := range tree.tailPtrMap {
 			tailPos, err := dstHandle.Seek(0, 1)
 			// _, err = dstHandle.Write(tailBody)
 			if err != nil {
@@ -124,7 +153,7 @@ func (r *Region) write(dstHandle *os.File) error {
 			}
 
 			var tailAll = make([]byte, 3)
-			binary.LittleEndian.PutUint16(tailAll, body.headOffset)
+			binary.LittleEndian.PutUint16(tailAll, tree.headOffset)
 			tailAll[2] = uint8(len([]byte(tailStr)))
 			tailAll = append(tailAll, []byte(tailStr)...)
 
@@ -133,10 +162,21 @@ func (r *Region) write(dstHandle *os.File) error {
 				return fmt.Errorf("write tail string'%s': %w", tailStr, err)
 			}
 
-			body.tailPtrMap[tailStr] = uint32(tailPos)
+			tree.tailPtrMap[tailStr] = uint32(tailPos)
 			log.Printf(" --[Added] with ptr=%d", pos)
 		}
-		r.totalTail += len(body.tailPtrMap)
+		r.totalTail += len(tree.tailPtrMap)
+	}
+
+	reservedTree, has := r.treeMap[RESERVED_HEAD_ADDR]
+	if has {
+		reservedTail, hasTail := reservedTree.tailPtrMap[RESERVED_TAIL_ADDR]
+		if hasTail {
+			r.reservedTailPtr = reservedTail
+		}
+	}
+	if r.reservedTailPtr == 0 {
+		return fmt.Errorf("reserve region info not set")
 	}
 
 	return nil

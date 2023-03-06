@@ -12,36 +12,65 @@ import (
 )
 
 type Segment struct {
-	StartIP uint32
-	EndIP   uint32
-	Region  string
+	StartIP    uint32
+	EndIP      uint32
+	RegionHead string
+	RegionTail string
 }
 
-func SegmentFrom(seg string) (*Segment, error) {
-	var ps = strings.SplitN(seg, "|", 3)
+func SegmentFrom(lineStr string) (seg *Segment, err error) {
+
+	var ps = strings.SplitN(lineStr, "|", 3)
 	if len(ps) != 3 {
-		return nil, fmt.Errorf("invalid ip segment `%s`", seg)
+		err = fmt.Errorf("invalid ip segment line `%s`", lineStr)
+		return
 	}
 
 	sip, err := xdb.CheckIP(ps[0])
 	if err != nil {
-		return nil, fmt.Errorf("check start ip `%s`: %s", ps[0], err)
+		return
 	}
 
 	eip, err := xdb.CheckIP(ps[1])
 	if err != nil {
-		return nil, fmt.Errorf("check end ip `%s`: %s", ps[1], err)
+		return
 	}
 
 	if sip > eip {
-		return nil, fmt.Errorf("start ip(%s) should not be greater than end ip(%s)", ps[0], ps[1])
+		err = fmt.Errorf("start ip(%s) should not be greater than end ip(%s)", ps[0], ps[1])
+		return
 	}
 
-	return &Segment{
-		StartIP: sip,
-		EndIP:   eip,
-		Region:  ps[2],
-	}, nil
+	if len(ps[2]) < 1 {
+		err = fmt.Errorf("empty region info in segment line `%s`", lineStr)
+		return
+	}
+
+	regionHead, regionTail, err := headAndTail(ps[2])
+	if err != nil {
+		return
+	}
+
+	seg = &Segment{
+		StartIP:    sip,
+		EndIP:      eip,
+		RegionHead: regionHead,
+		RegionTail: regionTail,
+	}
+	return
+
+	// return &Segment{
+	// 	StartIP:    sip,
+	// 	EndIP:      eip,
+	// 	RegionHead: regionHead,
+	// 	RegionTail: regionTail,
+	// }, nil
+}
+
+// 为了符合vector索引逻辑，符合条件，且起止ip的后两段必须为 0.0，255.255 这样满区段的，才作为内部ip处理
+func (s *Segment) IsReserved() bool {
+	return s.StartIP&xdb.IP_TAIL_PATTERN == 0 && s.EndIP&xdb.IP_TAIL_PATTERN == xdb.IP_TAIL_PATTERN && strings.Index(s.RegionHead, RESERVED_HEAD_ADDR) == 0 && strings.Index(s.RegionTail, RESERVED_TAIL_ADDR) == 0
+
 }
 
 // Split the segment based on the pre-two bytes
@@ -84,9 +113,10 @@ func (s *Segment) Split() []*Segment {
 			}
 
 			segList = append(segList, &Segment{
-				StartIP: sip,
-				EndIP:   eip,
-				Region:  s.Region,
+				StartIP:    sip,
+				EndIP:      eip,
+				RegionHead: s.RegionHead,
+				RegionTail: s.RegionTail,
 			})
 		}
 	}
@@ -95,5 +125,17 @@ func (s *Segment) Split() []*Segment {
 }
 
 func (s *Segment) String() string {
-	return xdb.Long2IP(s.StartIP) + "|" + xdb.Long2IP(s.EndIP) + "|" + s.Region
+	return strings.Join([]string{
+		xdb.Long2IP(s.StartIP),
+		xdb.Long2IP(s.EndIP),
+		s.RegionHead,
+		s.RegionTail,
+	}, xdb.REGION_STR_SEP)
+}
+
+func (s *Segment) RegionStr() string {
+	return strings.Join([]string{
+		s.RegionHead,
+		s.RegionTail,
+	}, xdb.REGION_STR_SEP)
 }

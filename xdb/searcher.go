@@ -38,6 +38,7 @@ const (
 )
 
 type CachePolicy int
+type IndexPolicy int
 
 const (
 	CACHE_POLICY_FILE CachePolicy = iota
@@ -46,12 +47,9 @@ const (
 )
 
 // --- Index policy define
-
-type IndexPolicy int
-
 const (
-	VectorIndexPolicy IndexPolicy = 1
-	BTreeIndexPolicy  IndexPolicy = 2
+	VectorIndexPolicy IndexPolicy = iota + 1
+	BTreeIndexPolicy
 )
 
 func (i IndexPolicy) String() string {

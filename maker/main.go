@@ -263,32 +263,15 @@ func testBench() {
 	var spentTime, ioCount int64
 	for scanner.Scan() {
 		var l = strings.TrimSpace(strings.TrimSuffix(scanner.Text(), "\n"))
-		var ps = strings.SplitN(l, "|", 3)
-		if len(ps) != 3 {
-			fmt.Printf("invalid ip segment line `%s`\n", l)
-			return
-		}
-
-		sip, err := xdb.CheckIP(ps[0])
+		seg, err := SegmentFrom(l)
 		if err != nil {
-			fmt.Printf("check start ip `%s`: %s\n", ps[0], err)
-			return
-		}
-
-		eip, err := xdb.CheckIP(ps[1])
-		if err != nil {
-			fmt.Printf("check end ip `%s`: %s\n", ps[1], err)
-			return
-		}
-
-		if sip > eip {
-			fmt.Printf("start ip(%s) should not be greater than end ip(%s)\n", ps[0], ps[1])
+			fmt.Println(err)
 			return
 		}
 
 		fmt.Printf("try to bench segment: `%s`\n", l)
-		mip := xdb.MidIP(sip, eip)
-		for _, ip := range []uint32{sip, xdb.MidIP(sip, mip), mip, xdb.MidIP(mip, eip), eip} {
+		mip := xdb.MidIP(seg.StartIP, seg.EndIP)
+		for _, ip := range []uint32{seg.StartIP, xdb.MidIP(seg.StartIP, mip), mip, xdb.MidIP(mip, seg.EndIP), seg.EndIP} {
 			fmt.Printf("|-try to bench ip '%s' ... ", xdb.Long2IP(ip))
 			searchStart := time.Now()
 			region, err := searcher.Search(ip)
@@ -301,9 +284,9 @@ func testBench() {
 
 			// check the region info
 			count++
-			if region != ps[2] {
+			if region != seg.RegionStr() {
 				errCount++
-				fmt.Printf(" --[Failed] (%s != %s)\n", region, ps[2])
+				fmt.Printf(" --[Failed] (%s != %s)\n", region, seg.RegionStr())
 				if !ignoreError {
 					return
 				}
